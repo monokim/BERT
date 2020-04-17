@@ -5,7 +5,11 @@ import datetime
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from transformers import BertTokenizer, BertForSequenceClassification, AdamW, BertConfig, get_linear_schedule_with_warmup
+from transformers import BertTokenizer, BertForSequenceClassification, BertConfig
+from transformers import AlbertTokenizer, AlbertForSequenceClassification, AlbertConfig
+from transformers import RobertaTokenizer, RobertaForSequenceClassification, RobertaConfig
+from transformers import XLNetTokenizer, XLNetForSequenceClassification, XLNetConfig
+from transformers import get_linear_schedule_with_warmup, AdamW
 from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset, TensorDataset, DataLoader, RandomSampler, SequentialSampler
 
@@ -19,10 +23,10 @@ class CustomDataset():
         elif file_type == '.json':
             pass
 
-        self.sentence = self.df[names[0]]
-        self.category = self.df[names[1]]
-        self.category = [1 if l == 'positive' else 0 for l in self.category]
-        #self.category = [c - min(self.category) for c in self.category]
+        self.sentence = self.df['sentence']
+        self.category = self.df['category']
+        #self.category = [1 if l == 'positive' else 0 for l in self.category]
+        self.category = [c - min(self.category) for c in self.category]
 
         self.data = list(zip(self.sentence, self.category))
         random.shuffle(self.data)
@@ -53,8 +57,9 @@ def format_time(elapsed):
     elapsed_rounded = int(round(elapsed))
     return str(datetime.timedelta(seconds=elapsed_rounded))
 
-def run():
+def run(bert_model):
     # Check if there is a GPU available.
+    print(bert_model + " model will be used")
     if torch.cuda.is_available():
         device = torch.device('cuda')
         print('There are %d GPU(s) available.' % torch.cuda.device_count())
@@ -65,20 +70,27 @@ def run():
 
     # Load data from custom dataset class
     print("Load Dataset")
-    dataset = CustomDataset(file="./Code/Dataset/IMDB_Dataset.csv", names=['sentence', 'category'], delimiter=',', header=None)
-
-    sentences, labels = dataset[1000:2000]
+    #dataset = CustomDataset(file="./Code/Dataset/IMDB_Dataset.csv", names=['sentence', 'category'], delimiter=',', header=None)
+    dataset = pd.read_csv("./Code/Dataset/ag_news_train.csv", delimiter=',', header=None, names=['category', 'head', 'sentence'])
+    sentences, labels = dataset[:]
     print("Training size : %d" % len(sentences))
 
     # Load BERT Tokenizer.
-    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
+    if bert_model == 'bert':
+        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
+    elif bert_model == 'albert':
+        tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2', do_lower_case=True)
+    elif bert_model == 'roberta':
+        tokenizer = RobertaTokenizer.from_pretrained('roberta-base', do_lower_case=True)
+    elif bert_model == 'xlnet':
+        tokenizer = XLNetTokenizer.from_pretrained('xlnet-base-cased', do_lower_case=True)
+
     print('Original : ', sentences[0])
     print('Tokenized : ', tokenizer.tokenize(sentences[0]))
     print('Token IDs : ', tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sentences[0])))
 
     # Sentence to embedded ID.
-    print()
-    print("Encoding sentence to embedded ID...")
+    print("\nEncoding sentence to embedded ID...")
     input_ids = []
     for s in sentences:
         encoded_sentence = tokenizer.encode(s, max_length = 512, add_special_tokens=True)
@@ -98,11 +110,11 @@ def run():
         att_mask = [int(token_id) > 0 for token_id in id]
         attention_masks.append(att_mask)
 
-
     # Split data to train and validation.
     train_inputs, valid_inputs, train_labels, valid_labels = train_test_split(input_ids, labels, random_state=2020, test_size=0.1)
     train_masks, valid_masks, _, _ = train_test_split(attention_masks, labels, random_state=2020, test_size=0.1)
 
+    # Data to tensor
     train_inputs = torch.tensor(train_inputs)
     valid_inputs = torch.tensor(valid_inputs)
 
@@ -124,12 +136,35 @@ def run():
     ##############################
     ########## Training ##########
     ##############################
-    model = BertForSequenceClassification.from_pretrained(
-        'bert-base-uncased',
-        num_labels = 2, # depends on data.
-        output_attentions = False,
-        output_hidden_states = False
-    )
+    if bert_model == 'bert':
+        model = BertForSequenceClassification.from_pretrained(
+            'bert-base-uncased',
+            num_labels = 4, # depends on data.
+            output_attentions = False,
+            output_hidden_states = False
+        )
+    elif bert_model == 'albert':
+        model = AlbertForSequenceClassification.from_pretrained(
+            'albert-base-v2',
+            num_labels = 4, # depends on data.
+            output_attentions = False,
+            output_hidden_states = False
+        )
+    elif bert_model == 'roberta':
+        model = RobertaForSequenceClassification.from_pretrained(
+            'roberta-base',
+            num_labels = 4, # depends on data.
+            output_attentions = False,
+            output_hidden_states = False
+        )
+    elif bert_model == 'xlnet':
+        model = XLNetForSequenceClassification.from_pretrained(
+            'xlnet-base-cased',
+            num_labels = 4, # depends on data.
+            output_attentions = False,
+            output_hidden_states = False
+        )
+
 
     if device.type == 'cuda':
         model.cuda()
@@ -149,10 +184,11 @@ def run():
     # Store the average loss after each epoch so we can plot them.
     loss_values = []
 
+    training_time = time.time()
     for epoch_i in range(0, epochs):
-        print("")
-        print('======== Epoch {:} / {:} ========'.format(epoch_i + 1, epochs))
-        print('Training...')
+        #print("")
+        #print('======== Epoch {:} / {:} ========'.format(epoch_i + 1, epochs))
+        #print('Training...')
 
         # Measure how long the training epoch takes.
         t0 = time.time()
@@ -168,7 +204,7 @@ def run():
             # Progress update every 30 batches.
             if step % 30 == 0 and not step == 0:
                 elapsed = format_time(time.time() - t0)
-                print("    Batch {:>5,}  of  {:>5,}.    Elapsed: {:}.".format(step, len(train_dataloader), elapsed))
+                #print("    Batch {:>5,}  of  {:>5,}.    Elapsed: {:}.".format(step, len(train_dataloader), elapsed))
 
             # Unpack this training batch from our dataloader.
             b_input_ids = batch[0].to(device)
@@ -265,20 +301,26 @@ def run():
         print("    Training Accuracy: {0:.2f}".format(eval_accuracy/nb_eval_steps))
         print("    Validation took: {:}".format(format_time(time.time() - t0)))
 
-    print("\nTraining complete!\n")
+    print("\nTraining complete!")
+    print("Training took: {:}".format(format_time(time.time() - training_time)))
+    print()
 
+    """
     plt.plot(loss_values, 'b-o')
     plt.title("Training Loss")
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
 
     plt.show()
-
+    """
 
     ##############################
     ############ Test ############
     ##############################
-    sentences, labels = dataset[:1000]
+    #sentences, labels = dataset[:1000]
+
+    dataset = pd.read_csv("./Code/Dataset/ag_news_test.csv", delimiter=',', header=None, names=['category', 'head', 'sentence'])
+    sentences, labels = dataset[:]
     print("Test size : %d" % len(sentences))
 
     input_ids = []
@@ -322,8 +364,9 @@ def run():
         eval_accuracy += flat_accuracy(logits, label_ids)
         eval_steps += 1
 
-    print("Test Accuracy: {0:.2f}".format(eval_accuracy/eval_steps))
-    print("Done")
+    print(bert_model + "Test Accuracy: {0:.2f}".format(eval_accuracy/eval_steps))
+    print("\nDone")
 
-
-run()
+bert_models = ['bert', 'albert', 'roberta', 'xlnet']
+for b in bert_models:
+    run(b)
