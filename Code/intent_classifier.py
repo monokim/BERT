@@ -40,6 +40,9 @@ class CustomDataset():
 
         return list(self.sentence[idx]), list(self.category[idx])
 
+    def get_items(self):
+        return self.sentence, self.category
+
 def add_padding_and_truncate(input_ids):
     MAX_LEN = 64
     for index, input_id in enumerate(input_ids):
@@ -71,8 +74,14 @@ def run(bert_model):
     # Load data from custom dataset class
     print("Load Dataset")
     #dataset = CustomDataset(file="./Code/Dataset/IMDB_Dataset.csv", names=['sentence', 'category'], delimiter=',', header=None)
-    dataset = pd.read_csv("./Code/Dataset/ag_news_train.csv", delimiter=',', header=None, names=['category', 'head', 'sentence'])
+
+    dataset = CustomDataset("./Code/Dataset/ag_news_train.csv", delimiter=',', header=None, names=['category', 'head', 'sentence'])
     sentences, labels = dataset[:]
+
+    # For XLNet
+    #sentences, labels = dataset[1000:]
+    sentences = [sentence + " [SEP] [CLS]" for sentence in sentences]
+
     print("Training size : %d" % len(sentences))
 
     # Load BERT Tokenizer.
@@ -93,7 +102,10 @@ def run(bert_model):
     print("\nEncoding sentence to embedded ID...")
     input_ids = []
     for s in sentences:
-        encoded_sentence = tokenizer.encode(s, max_length = 512, add_special_tokens=True)
+        #encoded_sentence = tokenizer.encode(s, max_length = 512, add_special_tokens=True)
+
+        # XLNet
+        encoded_sentence = tokenizer.encode(s, max_length = 512)
         input_ids.append(encoded_sentence)
 
     print('original: ', sentences[0])
@@ -107,7 +119,7 @@ def run(bert_model):
     attention_masks = []
 
     for id in input_ids:
-        att_mask = [int(token_id) > 0 for token_id in id]
+        att_mask = [int(token_id > 0) for token_id in id]
         attention_masks.append(att_mask)
 
     # Split data to train and validation.
@@ -160,9 +172,7 @@ def run(bert_model):
     elif bert_model == 'xlnet':
         model = XLNetForSequenceClassification.from_pretrained(
             'xlnet-base-cased',
-            num_labels = 4, # depends on data.
-            output_attentions = False,
-            output_hidden_states = False
+            num_labels = 4,
         )
 
 
@@ -186,9 +196,9 @@ def run(bert_model):
 
     training_time = time.time()
     for epoch_i in range(0, epochs):
-        #print("")
-        #print('======== Epoch {:} / {:} ========'.format(epoch_i + 1, epochs))
-        #print('Training...')
+        print("")
+        print('======== Epoch {:} / {:} ========'.format(epoch_i + 1, epochs))
+        print('Training...')
 
         # Measure how long the training epoch takes.
         t0 = time.time()
@@ -204,7 +214,7 @@ def run(bert_model):
             # Progress update every 30 batches.
             if step % 30 == 0 and not step == 0:
                 elapsed = format_time(time.time() - t0)
-                #print("    Batch {:>5,}  of  {:>5,}.    Elapsed: {:}.".format(step, len(train_dataloader), elapsed))
+                print("    Batch {:>5,}  of  {:>5,}.    Elapsed: {:}.".format(step, len(train_dataloader), elapsed))
 
             # Unpack this training batch from our dataloader.
             b_input_ids = batch[0].to(device)
@@ -319,22 +329,25 @@ def run(bert_model):
     ##############################
     #sentences, labels = dataset[:1000]
 
-    dataset = pd.read_csv("./Code/Dataset/ag_news_test.csv", delimiter=',', header=None, names=['category', 'head', 'sentence'])
+    dataset = CustomDataset("./Code/Dataset/ag_news_test.csv", delimiter=',', header=None, names=['category', 'head', 'sentence'])
     sentences, labels = dataset[:]
+    #sentences, labels = dataset[:1000]
+    sentences = [sentence + " [SEP] [CLS]" for sentence in sentences]
     print("Test size : %d" % len(sentences))
 
     input_ids = []
     for s in sentences:
-        encoded_sentence = tokenizer.encode(s, max_length = 512, add_special_tokens=True)
+        #encoded_sentence = tokenizer.encode(s, max_length = 512, add_special_tokens=True)
+        encoded_sentence = tokenizer.encode(s, max_length = 512)
         input_ids.append(encoded_sentence)
 
     add_padding_and_truncate(input_ids)
 
     attention_masks = []
 
-    for seq in input_ids:
-        seq_mask = [float(i > 0) for i in seq]
-        attention_masks.append(seq_mask)
+    for id in input_ids:
+        att_mask = [int(token_id > 0) for token_id in id]
+        attention_masks.append(att_mask)
 
     prediction_inputs = torch.tensor(input_ids)
     prediction_masks = torch.tensor(attention_masks)
@@ -367,6 +380,6 @@ def run(bert_model):
     print(bert_model + "Test Accuracy: {0:.2f}".format(eval_accuracy/eval_steps))
     print("\nDone")
 
-bert_models = ['bert', 'albert', 'roberta', 'xlnet']
+bert_models = ['xlnet']#['bert', 'albert', 'roberta', 'xlnet']
 for b in bert_models:
     run(b)
